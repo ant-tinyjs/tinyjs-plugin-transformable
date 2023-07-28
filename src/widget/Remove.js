@@ -1,3 +1,4 @@
+import * as Tiny from '@alipay/tiny.js';
 import { ICONS } from '../constants';
 
 const [img, a, b] = ICONS['remove'];
@@ -10,6 +11,9 @@ class Remove extends Tiny.Sprite {
     });
     this.on('pointerup', (e) => {
       parent.emit('remove:touchend', e);
+    });
+    this.on('pointertap', (e) => {
+      parent.emit('remove:click', e);
     });
   }
 }

@@ -1,3 +1,4 @@
+import * as Tiny from '@alipay/tiny.js';
 import { DEFAULT_FRAME } from './constants';
 import { Draggable, Frame, Zoom, Rotate, Remove, FlipX, FlipY, Widget } from './widget';
 
@@ -42,8 +43,6 @@ class Transformable extends Tiny.Container {
     super();
 
     const { frame = {}, drag = {}, zoom = {}, rotation = {}, remove = {}, flipx = {}, flipy = {} } = opts;
-    const { width, height } = target.getBounds();
-
     this.$fixedIndex = false;
     this.$icons = {};
 
@@ -66,66 +65,96 @@ class Transformable extends Tiny.Container {
      */
     this.widgetContainer = new Tiny.Container();
 
-    target.setAnchor(0.5);
+    /**
+     * texture 加载后的初始化
+     */
+    const textureLoadedFn = () => {
+      const _width = target.width;
+      const _height = target.height;
+      const { width, height } = target.getBounds();
+
+      /**
+       * 被编辑显示对象的宽
+       *
+       * @type {number}
+       */
+      this.targetWidth = Math.max(_width, width);
+      /**
+       * 被编辑显示对象的高
+       *
+       * @type {number}
+       */
+      this.targetHeight = Math.max(_height, height);
+      this.deactivate();
+      this.addChild(this.spriteContainer);
+      this.addChild(this.widgetContainer);
+      this.spriteContainer.addChild(target);
+      this.widgetContainer.addChild(Frame.getInstance({ width: this.targetWidth, height: this.targetHeight, ...DEFAULT_FRAME, ...frame }));
+
+      // transformable 元素锚点在中心
+      if (target.anchor) {
+        target.anchor.set(0.5);
+      } else {
+        this.spriteContainer.pivot.set(this.targetWidth / 2, this.targetHeight / 2);
+      }
+
+      new Draggable(this, drag); // eslint-disable-line
+
+      if (zoom) {
+        this.widgetContainer.addChild(Zoom.getInstance(this, { ...{ minScale: 0.5, maxScale: 1.5 }, ...zoom }));
+      }
+
+      if (rotation) {
+        this.widgetContainer.addChild(Rotate.getInstance(this, { ...rotation, fitness: ({ ...DEFAULT_FRAME, ...frame }).fitness }));
+      }
+
+      if (remove) {
+        this.widgetContainer.addChild(Remove.getInstance(this, { ...remove }));
+      }
+
+      if (flipx) {
+        this.widgetContainer.addChild(FlipX.getInstance(this, { ...flipx }));
+      }
+
+      if (!flipx && flipy) {
+        this.widgetContainer.addChild(FlipY.getInstance(this, { ...flipy }));
+      }
+
+      Transformable.instancesPoll.push(this);
+
+      this.on('removed', () => {
+        Tiny.arrayRemoveObject(Transformable.instancesPoll, this);
+      });
+      this.on('added', () => {
+        const p = this.parent;
+        const cancelHandler = (e) => {
+          for (const key in this.$icons) {
+            this.$icons[key].activated = false;
+          }
+        };
+
+        p.on('pointerup', cancelHandler);
+        p.on('pointerout', cancelHandler);
+        p.on('pointercancel', cancelHandler);
+        p.on('pointerupoutside', cancelHandler);
+      });
+    };
 
     /**
-     * 被编辑显示对象的宽
-     *
-     * @type {number}
+     * 等 texture 加载成功后初始化
      */
-    this.targetWidth = width;
-    /**
-     * 被编辑显示对象的高
-     *
-     * @type {number}
-     */
-    this.targetHeight = height;
-    this.deactivate();
-    this.addChild(this.spriteContainer);
-    this.addChild(this.widgetContainer);
-    this.spriteContainer.addChild(target);
-    this.widgetContainer.addChild(Frame.getInstance({ width, height, ...DEFAULT_FRAME, ...frame }));
-
-    new Draggable(this, drag); // eslint-disable-line
-
-    if (zoom) {
-      this.widgetContainer.addChild(Zoom.getInstance(this, { ...{ minScale: 0.5, maxScale: 1.5 }, ...zoom }));
+    if (target.isSprite && target.texture.baseTexture.resource) {
+      const r = target.texture.baseTexture.resource;
+      const loaded = r.load();
+      loaded.then(data => {
+        textureLoadedFn();
+        // console.log(target.width, target.height); // texture 完成加载
+      }).catch(error => {
+        console.error('sprite image load error: ', error.path); // image 加载失败
+      });
+    } else {
+      textureLoadedFn();
     }
-
-    if (rotation) {
-      this.widgetContainer.addChild(Rotate.getInstance(this, { ...rotation, fitness: ({ ...DEFAULT_FRAME, ...frame }).fitness }));
-    }
-
-    if (remove) {
-      this.widgetContainer.addChild(Remove.getInstance(this, { ...remove }));
-    }
-
-    if (flipx) {
-      this.widgetContainer.addChild(FlipX.getInstance(this, { ...flipx }));
-    }
-
-    if (!flipx && flipy) {
-      this.widgetContainer.addChild(FlipY.getInstance(this, { ...flipy }));
-    }
-
-    Transformable.instancesPoll.push(this);
-
-    this.on('removed', () => {
-      Tiny.arrayRemoveObject(Transformable.instancesPoll, this);
-    });
-    this.on('added', () => {
-      const p = this.parent;
-      const cancelHandler = (e) => {
-        for (const key in this.$icons) {
-          this.$icons[key].activated = false;
-        }
-      };
-
-      p.on('pointerup', cancelHandler);
-      p.on('pointerout', cancelHandler);
-      p.on('pointercancel', cancelHandler);
-      p.on('pointerupoutside', cancelHandler);
-    });
 
     /**
      * Fired when remove touchend.
@@ -148,15 +177,19 @@ class Transformable extends Tiny.Container {
    * 激活编辑态
    */
   activate() {
-    Transformable.deactivateAll();
-    this.widgetContainer.renderable = true;
+    if (!this.widgetContainer.visible) {
+      Transformable.deactivateAll();
+      this.widgetContainer.visible = true;
 
-    if (!this.$fixedIndex) {
-      this.parent.setChildIndex(this, this.parent.children.length - 1);
-    }
+      if (!this.$fixedIndex) {
+        this.parent.setChildIndex(this, this.parent.children.length - 1);
+      }
 
-    for (const key in this.$icons) {
-      this.$icons[key].setEventEnabled(true);
+      for (const key in this.$icons) {
+        this.$icons[key].setEventEnabled(true);
+      }
+
+      this.emit('activate');
     }
   }
 
@@ -164,9 +197,13 @@ class Transformable extends Tiny.Container {
    * 休眠编辑态
    */
   deactivate() {
-    this.widgetContainer.renderable = false;
-    for (const key in this.$icons) {
-      this.$icons[key].setEventEnabled(false);
+    if (this.widgetContainer.visible) {
+      this.widgetContainer.visible = false;
+      for (const key in this.$icons) {
+        this.$icons[key].setEventEnabled(false);
+      }
+
+      this.emit('deactivate');
     }
   }
 
@@ -201,6 +238,14 @@ class Transformable extends Tiny.Container {
   }
 }
 
+/**
+ * 设定 container 范围
+ */
+Transformable.setDragArea = Draggable.setDragArea;
+
+/**
+ * 当前 transformable 元素
+ */
 Transformable.instancesPoll = [];
 
 /**

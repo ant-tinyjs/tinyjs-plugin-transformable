@@ -1,3 +1,4 @@
+import * as Tiny from '@alipay/tiny.js';
 import { ICONS } from '../constants';
 
 const [img, a, b] = ICONS['flipy'];
@@ -12,6 +13,9 @@ class FlipY extends Tiny.Sprite {
     });
     this.on('pointerup', (e) => {
       target.scale.y *= -1;
+      if (!target.anchor) {
+        target.position.y = target.scale.y > 0 ? 0 : target.height;
+      }
       parent.emit('flipy:touchend', e);
     });
   }
